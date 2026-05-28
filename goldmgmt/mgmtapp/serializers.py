@@ -5,6 +5,10 @@ from rest_framework import serializers
 from .models import Department, DepartmentRecord, DepartmentRecordTransferBatch, FieldDefinition, MeltingLot, MetalReceipt, MetalReceiptReplica, ParentLot, Process, Product, Purity
 
 
+def round_weight(value):
+    return round(float(value), 3)
+
+
 class FieldDefinitionSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         field_type = attrs.get('field_type', getattr(self.instance, 'field_type', None))
@@ -318,7 +322,7 @@ class MeltingLotSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError('Invalid metal receipt selection.')
 
             try:
-                parsed_required_weight = float(required_weight)
+                parsed_required_weight = round_weight(required_weight)
             except (TypeError, ValueError):
                 raise serializers.ValidationError(
                     f'Required weight must be a valid number for {receipt_replica.receipt_no}.'
@@ -337,15 +341,23 @@ class MeltingLotSerializer(serializers.ModelSerializer):
         attrs = super().validate(attrs)
         receipt_allocations = attrs.get('receipt_allocations')
         if receipt_allocations:
-            attrs['required_weight'] = sum(
+            attrs['required_weight'] = round_weight(sum(
                 allocation['required_weight'] for allocation in receipt_allocations
-            )
+            ))
         elif not attrs.get('metal_receipt_replica'):
             raise serializers.ValidationError({'receipt_allocations': 'Select at least one metal receipt.'})
         return attrs
 
     def get_gross_weight(self, obj):
-        return obj.gross_weight
+        return round_weight(obj.gross_weight)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        for field in ('hook_purity', 'required_weight', 'require_alloy_weight', 'gross_weight'):
+            value = data.get(field)
+            if value is not None:
+                data[field] = round_weight(value)
+        return data
 
     def get_receipt_allocation_details(self, obj):
         allocations = obj.receipt_allocations.select_related('metal_receipt').all()
@@ -357,11 +369,11 @@ class MeltingLotSerializer(serializers.ModelSerializer):
                     'type': allocation.metal_receipt.type,
                     'date': allocation.metal_receipt.date,
                     'description': allocation.metal_receipt.description,
-                    'melting_purity': allocation.metal_receipt.melting_purity,
-                    'in_weight': allocation.metal_receipt.in_weight,
-                    'balance_weight': allocation.metal_receipt.balance_weight,
-                    'required_weight': allocation.required_weight,
-                    'require_alloy_weight': allocation.require_alloy_weight,
+                    'melting_purity': round_weight(allocation.metal_receipt.melting_purity),
+                    'in_weight': round_weight(allocation.metal_receipt.in_weight),
+                    'balance_weight': round_weight(allocation.metal_receipt.balance_weight),
+                    'required_weight': round_weight(allocation.required_weight),
+                    'require_alloy_weight': round_weight(allocation.require_alloy_weight),
                 }
                 for allocation in allocations
             ]
@@ -379,11 +391,11 @@ class MeltingLotSerializer(serializers.ModelSerializer):
                 'type': receipt.type,
                 'date': receipt.date,
                 'description': receipt.description,
-                'melting_purity': receipt.melting_purity,
-                'in_weight': receipt.in_weight,
-                'balance_weight': receipt.balance_weight,
-                'required_weight': obj.required_weight,
-                'require_alloy_weight': obj.require_alloy_weight,
+                'melting_purity': round_weight(receipt.melting_purity),
+                'in_weight': round_weight(receipt.in_weight),
+                'balance_weight': round_weight(receipt.balance_weight),
+                'required_weight': round_weight(obj.required_weight),
+                'require_alloy_weight': round_weight(obj.require_alloy_weight),
             }
         ]
 
@@ -599,6 +611,7 @@ class DepartmentRecordSerializer(serializers.ModelSerializer):
                 'balance': batch.balance_snapshot,
                 'balance_gross': batch.balance_gross_snapshot,
                 'balance_fine': batch.balance_fine_snapshot,
+                'field_values': batch.field_values_snapshot,
                 'saved_at': batch.created_at,
             }
             for batch in obj.transfer_batches.all()

@@ -4,6 +4,10 @@ from django.db import models
 from django.db.models import Q, Sum
 
 
+def round_weight(value):
+    return round(value, 3)
+
+
 class Product(models.Model):
     product_name = models.CharField(max_length=255)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='products')
@@ -327,7 +331,7 @@ class MeltingLot(models.Model):
         pure_gold_weight = (working_receipt.in_weight * working_receipt.melting_purity) / 100
         total_weight = (pure_gold_weight / self.purity.purity_value) * 100
         total_alloy_weight = total_weight - working_receipt.in_weight
-        return (required_weight * total_alloy_weight) / working_receipt.in_weight
+        return round_weight((required_weight * total_alloy_weight) / working_receipt.in_weight)
 
     def _get_pending_receipt_allocations(self):
         return getattr(self, '_pending_receipt_allocations', None)
@@ -361,8 +365,8 @@ class MeltingLot(models.Model):
             if total_required_alloy_weight <= 0:
                 raise ValidationError('Not possible')
 
-            self.required_weight = total_required_weight
-            self.require_alloy_weight = total_required_alloy_weight
+            self.required_weight = round_weight(total_required_weight)
+            self.require_alloy_weight = round_weight(total_required_alloy_weight)
             return
 
         working_receipt = self.metal_receipt_replica or getattr(self.metal_receipt, 'replica', None)
@@ -400,7 +404,7 @@ class MeltingLot(models.Model):
                         melting_lot=self,
                         metal_receipt=working_receipt.source_receipt,
                         metal_receipt_replica=working_receipt,
-                        required_weight=required_weight,
+                        required_weight=round_weight(required_weight),
                         require_alloy_weight=required_alloy_weight,
                     )
                     working_receipt.in_weight = working_receipt.in_weight - required_weight
@@ -422,7 +426,8 @@ class MeltingLot(models.Model):
         calculated_alloy_weight = self._calculate_alloy_for_receipt(working_receipt, self.required_weight)
         if calculated_alloy_weight < 0:
             raise ValidationError('Not possible')
-        self.require_alloy_weight = calculated_alloy_weight
+        self.required_weight = round_weight(self.required_weight)
+        self.require_alloy_weight = round_weight(calculated_alloy_weight)
         self.full_clean()
 
         is_new = self.pk is None
@@ -442,7 +447,7 @@ class MeltingLot(models.Model):
 
     @property
     def gross_weight(self):
-        return self.required_weight + self.require_alloy_weight
+        return round_weight(self.required_weight + self.require_alloy_weight)
 
 
 class MeltingLotReceiptAllocation(models.Model):
@@ -704,6 +709,7 @@ class DepartmentRecord(models.Model):
                     balance_snapshot=self.balance,
                     balance_gross_snapshot=self.balance_gross,
                     balance_fine_snapshot=self.balance_fine,
+                    field_values_snapshot=self.field_values,
                 )
             return
 
@@ -718,6 +724,7 @@ class DepartmentRecord(models.Model):
                 balance_snapshot=self.balance,
                 balance_gross_snapshot=self.balance_gross,
                 balance_fine_snapshot=self.balance_fine,
+                field_values_snapshot=self.field_values,
             )
 
 
@@ -735,6 +742,7 @@ class DepartmentRecordTransferBatch(models.Model):
     balance_snapshot = models.FloatField(null=True, blank=True)
     balance_gross_snapshot = models.FloatField(null=True, blank=True)
     balance_fine_snapshot = models.FloatField(null=True, blank=True)
+    field_values_snapshot = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

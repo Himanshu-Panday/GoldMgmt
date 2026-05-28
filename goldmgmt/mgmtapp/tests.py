@@ -168,6 +168,35 @@ class MgmtModelTests(TestCase):
         self.assertEqual(second_receipt.replica.in_weight, 60.0)
         self.assertEqual(len(serializer.data['receipt_allocation_details']), 2)
 
+    def test_melting_lot_rounds_weight_values_to_three_decimals(self):
+        product = Product.objects.create(product_name='Gold Coin Rounded', user=self.user)
+        purity = Purity.objects.create(purity_value=80.0, user=self.user)
+        metal_receipt = MetalReceipt.objects.create(
+            accounts='Account R1',
+            type='Receipt',
+            description='Rounded value source',
+            melting_purity=81.05,
+            in_weight=100.0,
+            user=self.user,
+        )
+
+        melting_lot = MeltingLot.objects.create(
+            metal_receipt_replica=metal_receipt.replica,
+            purity=purity,
+            description='Rounded test',
+            hook_purity=5.0,
+            required_weight=10.0,
+            user=self.user,
+        )
+        melting_lot.products.add(product)
+
+        serializer = MeltingLotSerializer(instance=melting_lot)
+
+        self.assertEqual(melting_lot.require_alloy_weight, 0.131)
+        self.assertEqual(melting_lot.gross_weight, 10.131)
+        self.assertEqual(serializer.data['require_alloy_weight'], 0.131)
+        self.assertEqual(serializer.data['gross_weight'], 10.131)
+
     def test_melting_lot_negative_alloy_weight_is_not_possible(self):
         product = Product.objects.create(product_name='Gold Bar', user=self.user)
         purity = Purity.objects.create(purity_value=99.9, user=self.user)
@@ -816,6 +845,7 @@ class MgmtModelTests(TestCase):
         self.assertEqual(serializer.data['transfer_batches'][0]['lot_no'], melting_lot.name)
         self.assertEqual(serializer.data['transfer_batches'][0]['input_weight'], record.input_weight)
         self.assertEqual(serializer.data['transfer_batches'][0]['tounch'], record.tounch)
+        self.assertEqual(serializer.data['transfer_batches'][0]['field_values']['Karigar'], 'Amit')
 
     def test_department_record_tounch_cannot_make_balance_negative(self):
         product = Product.objects.create(product_name='Gold Wire 8', user=self.user)

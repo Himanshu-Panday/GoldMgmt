@@ -177,6 +177,7 @@ type DepartmentRecord = {
     balance?: number | null
     balance_gross?: number | null
     balance_fine?: number | null
+    field_values?: Record<string, FieldValue>
     saved_at?: string | null
   }[]
   tounch: number
@@ -257,6 +258,7 @@ type DepartmentRecordDraftContext = {
     balance?: number | null
     balance_gross?: number | null
     balance_fine?: number | null
+    field_values?: Record<string, FieldValue>
     saved_at?: string | null
   }[]
   department_fields: FieldDefinition[]
@@ -583,6 +585,18 @@ function calculateDepartmentBalances(
   return { balance, balanceGross, balanceFine }
 }
 
+function roundWeight(value: number) {
+  return Math.round(value * 1000) / 1000
+}
+
+function formatWeight(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return '--'
+  }
+
+  return roundWeight(value).toFixed(3)
+}
+
 function calculateRequiredAlloyWeight(
   metalReceipt: MetalReceiptReplica | null,
   meltingPurity: Purity | null,
@@ -595,7 +609,7 @@ function calculateRequiredAlloyWeight(
   const pureGoldWeight = (metalReceipt.in_weight * metalReceipt.melting_purity) / 100
   const totalWeight = (pureGoldWeight / meltingPurity.purity_value) * 100
   const totalAlloyWeight = totalWeight - metalReceipt.in_weight
-  const requiredAlloyWeight = (requiredWeight * totalAlloyWeight) / metalReceipt.in_weight
+  const requiredAlloyWeight = roundWeight((requiredWeight * totalAlloyWeight) / metalReceipt.in_weight)
 
   return {
     requiredAlloyWeight,
@@ -756,6 +770,7 @@ function MgmtPage() {
   const [showMeltingLotForm, setShowMeltingLotForm] = useState(false)
   const [expandedSidebarTab, setExpandedSidebarTab] = useState<'product' | null>(null)
   const [sidebarSelectedProductId, setSidebarSelectedProductId] = useState<number | null>(null)
+  const [sidebarExpandedProcessId, setSidebarExpandedProcessId] = useState<number | null>(null)
   const [lineageProductId, setLineageProductId] = useState<number | null>(null)
   const [lineageProcessId, setLineageProcessId] = useState<number | null>(null)
 
@@ -838,10 +853,13 @@ function MgmtPage() {
         if (preview) {
           totals.requiredAlloyWeight += preview.requiredAlloyWeight
         }
+        totals.requiredWeight = roundWeight(totals.requiredWeight)
+        totals.requiredAlloyWeight = roundWeight(totals.requiredAlloyWeight)
+        totals.grossWeight = roundWeight(totals.requiredWeight + totals.requiredAlloyWeight)
 
         return totals
       },
-      { requiredWeight: 0, requiredAlloyWeight: 0 },
+      { requiredWeight: 0, requiredAlloyWeight: 0, grossWeight: 0 },
     )
   }, [meltingReceiptPreviews, meltingRequiredWeightsByReceipt, meltingSelectedMetalReceiptReplicaIds])
   const departmentMeltingLots = useMemo(
@@ -1625,7 +1643,18 @@ function MgmtPage() {
   }
 
   function onSelectSidebarProduct(productId: number) {
+    if (sidebarSelectedProductId === productId) {
+      setSidebarSelectedProductId(null)
+      setSidebarExpandedProcessId(null)
+      setSelectedProductId(null)
+      setSelectedProcessId(null)
+      setSelectedDepartmentId(null)
+      setProductPageView('products')
+      return
+    }
+
     setSidebarSelectedProductId(productId)
+    setSidebarExpandedProcessId(null)
     setSelectedProductId(productId)
     setSelectedProcessId(null)
     setSelectedDepartmentId(null)
@@ -1633,9 +1662,25 @@ function MgmtPage() {
   }
 
   function onSelectSidebarProcess(processId: number) {
+    if (sidebarExpandedProcessId === processId) {
+      setSidebarExpandedProcessId(null)
+      setSelectedProcessId(null)
+      setSelectedDepartmentId(null)
+      setProductPageView('processes')
+      return
+    }
+
+    setSidebarExpandedProcessId(processId)
     setSelectedProcessId(processId)
     setSelectedDepartmentId(null)
     setProductPageView('departments')
+  }
+
+  function onSelectSidebarDepartment(productId: number, processId: number, departmentId: number) {
+    setSidebarSelectedProductId(productId)
+    setSidebarExpandedProcessId(processId)
+    setSelectedProductId(productId)
+    onOpenDepartment(departmentId, processId)
   }
 
   if (loading) {
@@ -1659,6 +1704,7 @@ function MgmtPage() {
             setExpandedSidebarTab((prev) => (prev === 'product' ? null : 'product'))
             if (expandedSidebarTab === 'product') {
               setSidebarSelectedProductId(null)
+              setSidebarExpandedProcessId(null)
             }
           }}
         >
@@ -1667,31 +1713,47 @@ function MgmtPage() {
         {activeTab === 'product' && expandedSidebarTab === 'product' && (
           <div className="sidebar-tree">
             <div className="sidebar-tree-group">
-              <p className="muted sidebar-tree-title">Products</p>
               {products.length === 0 && <p className="muted sidebar-tree-empty">No products yet.</p>}
               {products.map((product) => (
                 <div className="sidebar-product-group" key={product.id}>
                   <button
                     type="button"
-                    className={selectedProductId === product.id ? 'sidebar-subbtn active' : 'sidebar-subbtn'}
+                    className={selectedProductId === product.id ? 'sidebar-subbtn sidebar-tree-node sidebar-tree-node-product sidebar-tree-trigger active' : 'sidebar-subbtn sidebar-tree-node sidebar-tree-node-product sidebar-tree-trigger'}
                     onClick={() => onSelectSidebarProduct(product.id)}
                   >
-                    <span>{product.product_name}</span>
+                    <span className="sidebar-tree-label">{product.product_name}</span>
                     <small>{product.processes.length} processes</small>
                   </button>
                   {sidebarSelectedProductId === product.id && (
                     <div className="sidebar-process-list">
                       {product.processes.length === 0 && <p className="muted sidebar-tree-empty">No process records yet.</p>}
                       {product.processes.map((process) => (
-                        <button
-                          key={process.id}
-                          type="button"
-                          className={selectedProcessId === process.id ? 'sidebar-subbtn sidebar-subbtn-child active' : 'sidebar-subbtn sidebar-subbtn-child'}
-                          onClick={() => onSelectSidebarProcess(process.id)}
-                        >
-                          <span>{`#${process.sequence} ${process.process_name}`}</span>
-                          <small>{process.departments.length} departments</small>
-                        </button>
+                        <div key={process.id} className="sidebar-process-node">
+                          <button
+                            type="button"
+                            className={selectedProcessId === process.id ? 'sidebar-subbtn sidebar-subbtn-child sidebar-tree-node sidebar-tree-node-process sidebar-tree-trigger active' : 'sidebar-subbtn sidebar-subbtn-child sidebar-tree-node sidebar-tree-node-process sidebar-tree-trigger'}
+                            onClick={() => onSelectSidebarProcess(process.id)}
+                          >
+                            <span className="sidebar-tree-label">{`#${process.sequence} ${process.process_name}`}</span>
+                            <small>{process.departments.length} departments</small>
+                          </button>
+                          {sidebarExpandedProcessId === process.id && (
+                            <div className="sidebar-department-list">
+                              {process.departments.length === 0 && <p className="muted sidebar-tree-empty">No departments yet.</p>}
+                              {process.departments.map((department) => (
+                                <button
+                                  key={department.id}
+                                  type="button"
+                                  className={selectedDepartmentId === department.id ? 'sidebar-subbtn sidebar-subbtn-child sidebar-tree-node sidebar-tree-node-department sidebar-tree-leaf active' : 'sidebar-subbtn sidebar-subbtn-child sidebar-tree-node sidebar-tree-node-department sidebar-tree-leaf'}
+                                  onClick={() => onSelectSidebarDepartment(product.id, process.id, department.id)}
+                                >
+                                  <span className="sidebar-tree-label">{department.department_name}</span>
+                                  <small>{department.fields.length} fields</small>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       ))}
                     </div>
                   )}
@@ -1955,15 +2017,9 @@ function MgmtPage() {
                           <th>Lot purity</th>
                           <th>IN</th>
                           <th>OUT</th>
-                          <th>Tounch Number</th>
-                          <th>Tounch</th>
-                          <th>Tounch Purity</th>
                           <th>Balance</th>
                           <th>Balance Gross</th>
                           <th>Balance Fine</th>
-                          {selectedDepartment.fields.map((field) => (
-                            <th key={field.id}>{field.field_name}</th>
-                          ))}
                           <th>Date</th>
                           <th>Created_by</th>
                           <th>Action</th>
@@ -1972,7 +2028,7 @@ function MgmtPage() {
                       <tbody>
                         {departmentDisplayRows.length === 0 && (
                           <tr>
-                            <td colSpan={selectedDepartment.fields.length + 14}>
+                            <td colSpan={11}>
                               {previousDepartment
                                 ? 'No saved records found in the previous department for this process yet.'
                                 : 'No melting lots found for this product yet.'}
@@ -1983,7 +2039,6 @@ function MgmtPage() {
                           const draftValues = draftFieldValuesByLot[sourceRow.key] ?? {}
                           const draftOutWeight = draftOutWeightsByLot[sourceRow.key] ?? ''
                           const draftTounch = draftTounchByLot[sourceRow.key] ?? ''
-                          const draftTounchPurity = draftTounchPurityByLot[sourceRow.key] ?? ''
                           const parsedDraftOutWeight = draftOutWeight === '' ? null : Number(draftOutWeight)
                           const parsedDraftTounch = draftTounch === '' ? 0 : Number(draftTounch)
                           const fieldBalanceAdjustment = calculateFieldBalanceAdjustment(selectedDepartment.fields, draftValues)
@@ -2031,87 +2086,9 @@ function MgmtPage() {
                                   />
                                 )}
                               </td>
-                              <td>{existingRecord?.tounch_number ?? sourceRow.tounch_number ?? '-'}</td>
-                              <td>
-                                {existingRecord ? (
-                                  existingRecord.tounch
-                                ) : (
-                                  <input
-                                    type="number"
-                                    step="0.0001"
-                                    min="0"
-                                    value={draftTounch}
-                                    onChange={(e) =>
-                                      setDraftTounchByLot((prev) => ({
-                                        ...prev,
-                                        [sourceRow.key]: e.target.value,
-                                      }))
-                                    }
-                                  />
-                                )}
-                              </td>
-                              <td>
-                                {existingRecord ? (
-                                  existingRecord.tounch_purity
-                                ) : (
-                                  <input
-                                    type="number"
-                                    step="0.0001"
-                                    min="0"
-                                    value={draftTounchPurity}
-                                    onChange={(e) =>
-                                      setDraftTounchPurityByLot((prev) => ({
-                                        ...prev,
-                                        [sourceRow.key]: e.target.value,
-                                      }))
-                                    }
-                                  />
-                                )}
-                              </td>
                               <td>{existingRecord ? existingRecord.balance : previewMetrics?.balance ?? '-'}</td>
                               <td>{existingRecord ? existingRecord.balance_gross : previewMetrics?.balanceGross ?? '-'}</td>
                               <td>{existingRecord ? existingRecord.balance_fine : previewMetrics?.balanceFine ?? '-'}</td>
-                              {selectedDepartment.fields.map((field) => (
-                                <td key={field.id}>
-                                  {existingRecord ? (
-                                    String(existingRecord.field_values[field.field_name] ?? '-')
-                                  ) : (
-                                    field.field_type === 'boolean' ? (
-                                      <select
-                                        value={draftValues[field.field_name] ?? ''}
-                                        onChange={(e) =>
-                                          setDraftFieldValuesByLot((prev) => ({
-                                            ...prev,
-                                            [sourceRow.key]: {
-                                              ...(prev[sourceRow.key] ?? {}),
-                                              [field.field_name]: e.target.value,
-                                            },
-                                          }))
-                                        }
-                                      >
-                                        <option value="">Select</option>
-                                        <option value="true">True</option>
-                                        <option value="false">False</option>
-                                      </select>
-                                    ) : (
-                                      <input
-                                        type={field.field_type === 'number' ? 'number' : field.field_type === 'date' ? 'date' : 'text'}
-                                        step={field.field_type === 'number' ? '0.0001' : undefined}
-                                        value={draftValues[field.field_name] ?? ''}
-                                        onChange={(e) =>
-                                          setDraftFieldValuesByLot((prev) => ({
-                                            ...prev,
-                                            [sourceRow.key]: {
-                                              ...(prev[sourceRow.key] ?? {}),
-                                              [field.field_name]: e.target.value,
-                                            },
-                                          }))
-                                        }
-                                      />
-                                    )
-                                  )}
-                                </td>
-                              ))}
                               <td>{existingRecord ? new Date(existingRecord.date).toLocaleDateString() : new Date(sourceRow.date).toLocaleDateString()}</td>
                               <td>{existingRecord?.created_by_username ?? sourceRow.created_by_username}</td>
                               <td>
@@ -2525,7 +2502,7 @@ function MgmtPage() {
                           <td>
                             {meltingSelectedMetalReceiptReplicaIds.includes(receipt.id)
                               ? (meltingReceiptPreviews[receipt.id]
-                                  ? meltingReceiptPreviews[receipt.id]!.requiredAlloyWeight.toFixed(4)
+                                  ? formatWeight(meltingReceiptPreviews[receipt.id]!.requiredAlloyWeight)
                                   : '-')
                               : '-'}
                           </td>
@@ -2534,15 +2511,19 @@ function MgmtPage() {
                     </tbody>
                   </table>
                 </div>
-                <div className="stack-form two-columns">
-                  <label>
-                    Total Required Weight
-                    <input value={meltingReceiptTotals.requiredWeight ? meltingReceiptTotals.requiredWeight.toFixed(4) : ''} readOnly />
-                  </label>
-                  <label>
-                    Total Required Alloy Weight
-                    <input value={meltingReceiptTotals.requiredAlloyWeight ? meltingReceiptTotals.requiredAlloyWeight.toFixed(4) : ''} readOnly />
-                  </label>
+                <div className="melting-summary-cards">
+                  <article className="melting-summary-card">
+                    <small>Gross Weight</small>
+                    <strong>{formatWeight(meltingReceiptTotals.grossWeight)}</strong>
+                  </article>
+                  <article className="melting-summary-card">
+                    <small>Total Required Weight</small>
+                    <strong>{formatWeight(meltingReceiptTotals.requiredWeight)}</strong>
+                  </article>
+                  <article className="melting-summary-card">
+                    <small>Total Required Alloy Weight</small>
+                    <strong>{formatWeight(meltingReceiptTotals.requiredAlloyWeight)}</strong>
+                  </article>
                 </div>
                 <button className="btn primary" disabled={busy || meltingSelectedMetalReceiptReplicaIds.length === 0 || meltingSelectedProducts.length === 0} type="submit">
                   Save Melting Lot
@@ -2590,10 +2571,10 @@ function MgmtPage() {
                           <td>{new Date(lot.date).toLocaleDateString()}</td>
                           <td>{productNames}</td>
                           <td>{lot.description || '-'}</td>
-                          <td>{lot.required_weight}</td>
-                          <td>{lot.require_alloy_weight}</td>
-                          <td>{grossWeight}</td>
-                          <td>{purityLabel}</td>
+                          <td>{formatWeight(lot.required_weight)}</td>
+                          <td>{formatWeight(lot.require_alloy_weight)}</td>
+                          <td>{formatWeight(grossWeight)}</td>
+                          <td>{typeof purityLabel === 'number' ? purityLabel.toFixed(3) : purityLabel}</td>
                         </tr>
                       )
                     })}
@@ -2679,7 +2660,7 @@ function DepartmentRecordDetailPage() {
     setTounch(String(source.tounch))
     setTounchPurity(String(source.tounch_purity))
     setFieldValues(source.field_values)
-  }, [draftContext, record])
+  }, [draftContext, record?.id])
 
   if (loading) {
     return (
@@ -2802,7 +2783,12 @@ function DepartmentRecordDetailPage() {
         out_weight: effectiveOutWeight,
         tounch: parsedTounch,
         tounch_purity: parsedTounchPurity,
-        field_values: fieldValues,
+        field_values: buildDepartmentFieldPayload(
+          Object.fromEntries(
+            Object.entries(fieldValues).map(([key, value]) => [key, value === null || value === undefined ? '' : String(value)]),
+          ),
+          currentRecordData.department_fields,
+        ),
         is_active: true,
       }
 
@@ -2812,6 +2798,12 @@ function DepartmentRecordDetailPage() {
 
       setRecord(savedRecord)
       setDraftContext(null)
+      setOutWeight('')
+      setTounch('0')
+      setTounchPurity('0')
+      setFieldValues({})
+      setActiveFieldName(null)
+      setActiveFieldValue('')
       localStorage.setItem(DEPARTMENT_RECORD_UPDATE_SIGNAL_KEY, String(Date.now()))
       if (draftKey) {
         localStorage.removeItem(`${DEPARTMENT_RECORD_DRAFT_STORAGE_KEY}:${draftKey}`)
@@ -2932,8 +2924,8 @@ function DepartmentRecordDetailPage() {
                         <td>{receiptRow.melting_purity.toFixed(3)}</td>
                         <td>{receiptRow.in_weight ?? '--'}</td>
                         <td>{receiptRow.balance_weight ?? '--'}</td>
-                        <td>{receiptRow.required_weight ? receiptRow.required_weight.toFixed(4) : '--'}</td>
-                        <td>{receiptRow.require_alloy_weight ? receiptRow.require_alloy_weight.toFixed(4) : '--'}</td>
+                        <td>{receiptRow.required_weight ? formatWeight(receiptRow.required_weight) : '--'}</td>
+                        <td>{receiptRow.require_alloy_weight ? formatWeight(receiptRow.require_alloy_weight) : '--'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2961,13 +2953,16 @@ function DepartmentRecordDetailPage() {
                       <th>Balance</th>
                       <th>Balance Gross</th>
                       <th>Balance Fine</th>
+                      {currentRecordData.department_fields.map((field) => (
+                        <th key={field.id}>{field.field_name}</th>
+                      ))}
                       <th>Saved At</th>
                     </tr>
                   </thead>
                   <tbody>
                     {outHistoryRows.length === 0 && (
                       <tr>
-                        <td colSpan={13}>No saved OUT records yet.</td>
+                        <td colSpan={13 + currentRecordData.department_fields.length}>No saved OUT records yet.</td>
                       </tr>
                     )}
                     {outHistoryRows.map((batch, index) => (
@@ -2975,15 +2970,19 @@ function DepartmentRecordDetailPage() {
                         <td>{index + 1}</td>
                         <td>{batch.lot_no ?? currentRecordData.lot_no}</td>
                         <td>{batch.lot_purity !== undefined && batch.lot_purity !== null ? batch.lot_purity.toFixed(3) : '--'}</td>
-                        <td>{batch.input_weight !== undefined && batch.input_weight !== null ? batch.input_weight.toFixed(4) : '--'}</td>
-                        <td>{batch.forwarded_weight.toFixed(4)}</td>
-                        <td>{batch.total_out_weight !== undefined && batch.total_out_weight !== null ? batch.total_out_weight.toFixed(4) : '--'}</td>
+                        <td>{batch.input_weight !== undefined && batch.input_weight !== null ? formatWeight(batch.input_weight) : '--'}</td>
+                        <td>{formatWeight(batch.forwarded_weight)}</td>
+                        <td>{batch.total_out_weight !== undefined && batch.total_out_weight !== null ? formatWeight(batch.total_out_weight) : '--'}</td>
                         <td>{batch.tounch_number ?? '--'}</td>
-                        <td>{batch.tounch !== undefined && batch.tounch !== null ? batch.tounch.toFixed(4) : '--'}</td>
-                        <td>{batch.tounch_purity !== undefined && batch.tounch_purity !== null ? batch.tounch_purity.toFixed(4) : '--'}</td>
-                        <td>{batch.balance !== undefined && batch.balance !== null ? batch.balance.toFixed(4) : '--'}</td>
-                        <td>{batch.balance_gross !== undefined && batch.balance_gross !== null ? batch.balance_gross.toFixed(4) : '--'}</td>
-                        <td>{batch.balance_fine !== undefined && batch.balance_fine !== null ? batch.balance_fine.toFixed(4) : '--'}</td>
+                        <td>{batch.tounch !== undefined && batch.tounch !== null ? formatWeight(batch.tounch) : '--'}</td>
+                        <td>{batch.tounch_purity !== undefined && batch.tounch_purity !== null ? formatWeight(batch.tounch_purity) : '--'}</td>
+                        <td>{batch.balance !== undefined && batch.balance !== null ? formatWeight(batch.balance) : '--'}</td>
+                        <td>{batch.balance_gross !== undefined && batch.balance_gross !== null ? formatWeight(batch.balance_gross) : '--'}</td>
+                        <td>{batch.balance_fine !== undefined && batch.balance_fine !== null ? formatWeight(batch.balance_fine) : '--'}</td>
+                        {currentRecordData.department_fields.map((field) => {
+                          const value = batch.field_values?.[field.field_name]
+                          return <td key={`${batch.id}-${field.id}`}>{value === undefined || value === '' ? '--' : String(value)}</td>
+                        })}
                         <td>{batch.saved_at ? new Date(batch.saved_at).toLocaleString() : '--'}</td>
                       </tr>
                     ))}
@@ -3193,11 +3192,11 @@ function MeltingLotDetailPage() {
                 <small>Purity</small>
               </div>
               <div>
-                <strong>{lot.required_weight.toFixed(4)}</strong>
+                <strong>{formatWeight(lot.required_weight)}</strong>
                 <small>Required Weight</small>
               </div>
               <div>
-                <strong>{lot.require_alloy_weight.toFixed(4)}</strong>
+                <strong>{formatWeight(lot.require_alloy_weight)}</strong>
                 <small>Required Alloy Weight</small>
               </div>
             </div>
@@ -3206,7 +3205,7 @@ function MeltingLotDetailPage() {
           <section className="record-detail-card">
             <div className="record-detail-metrics">
               <div>
-                <strong>{lot.gross_weight.toFixed(4)}</strong>
+                <strong>{formatWeight(lot.gross_weight)}</strong>
                 <small>Gross Weight</small>
               </div>
               <div>
@@ -3258,8 +3257,8 @@ function MeltingLotDetailPage() {
                       <td>{receiptRow.melting_purity.toFixed(3)}</td>
                       <td>{receiptRow.in_weight ?? '--'}</td>
                       <td>{receiptRow.balance_weight ?? '--'}</td>
-                      <td>{receiptRow.required_weight.toFixed(4)}</td>
-                      <td>{receiptRow.require_alloy_weight.toFixed(4)}</td>
+                      <td>{formatWeight(receiptRow.required_weight)}</td>
+                      <td>{formatWeight(receiptRow.require_alloy_weight)}</td>
                     </tr>
                   ))}
                 </tbody>
