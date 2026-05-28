@@ -508,6 +508,139 @@ class MgmtModelTests(TestCase):
             ).count(),
             2,
         )
+        self.assertEqual(list(first_child.transfer_batches.values_list('forwarded_weight', flat=True)), [75.0])
+        self.assertEqual(list(second_child.transfer_batches.values_list('forwarded_weight', flat=True)), [20.0])
+
+    def test_batch_forwarding_moves_to_next_department_in_same_process(self):
+        product = Product.objects.create(product_name='Gold Wire Flow Chain', user=self.user)
+        process = Process.objects.create(product=product, process_name='AG', user=self.user)
+        first_department = Department.objects.create(process=process, department_name='Melting')
+        second_department = Department.objects.create(process=process, department_name='Flatting')
+        third_department = Department.objects.create(process=process, department_name='Dye')
+        purity = Purity.objects.create(purity_value=91.6, user=self.user)
+        metal_receipt = MetalReceipt.objects.create(
+            accounts='Account Flow 1',
+            type='Receipt',
+            description='Same process flow source',
+            melting_purity=99.5,
+            in_weight=400.0,
+            user=self.user,
+        )
+        melting_lot = MeltingLot.objects.create(
+            metal_receipt_replica=metal_receipt.replica,
+            purity=purity,
+            description='Same process flow test',
+            hook_purity=1.0,
+            required_weight=200.0,
+            user=self.user,
+        )
+        melting_lot.products.add(product)
+
+        first_record = DepartmentRecord.objects.create(
+            department=first_department,
+            melting_lot=melting_lot,
+            out_weight=100.0,
+            tounch=0.0,
+            tounch_purity=91.6,
+            field_values={},
+            user=self.user,
+            created_by=self.user,
+            updated_by=self.user,
+        )
+        second_record = DepartmentRecord.objects.create(
+            department=second_department,
+            melting_lot=melting_lot,
+            source_batch=first_record.transfer_batches.first(),
+            out_weight=65.0,
+            tounch=0.0,
+            tounch_purity=91.6,
+            field_values={},
+            user=self.user,
+            created_by=self.user,
+            updated_by=self.user,
+        )
+        third_record = DepartmentRecord.objects.create(
+            department=third_department,
+            melting_lot=melting_lot,
+            source_batch=second_record.transfer_batches.first(),
+            out_weight=40.0,
+            tounch=0.0,
+            tounch_purity=91.6,
+            field_values={},
+            user=self.user,
+            created_by=self.user,
+            updated_by=self.user,
+        )
+
+        self.assertEqual(second_record.input_weight, 100.0)
+        self.assertEqual(list(second_record.transfer_batches.values_list('forwarded_weight', flat=True)), [65.0])
+        self.assertEqual(third_record.input_weight, 65.0)
+
+    def test_batch_forwarding_moves_to_next_process_first_department(self):
+        product = Product.objects.create(product_name='Gold Wire Cross Process', user=self.user)
+        first_process = Process.objects.create(product=product, process_name='AG', user=self.user)
+        second_process = Process.objects.create(product=product, process_name='Chain-Making', user=self.user)
+        first_department = Department.objects.create(process=first_process, department_name='Flatting')
+        last_department = Department.objects.create(process=first_process, department_name='Dye')
+        next_process_department = Department.objects.create(process=second_process, department_name='Chaining')
+        purity = Purity.objects.create(purity_value=91.6, user=self.user)
+        metal_receipt = MetalReceipt.objects.create(
+            accounts='Account Flow 2',
+            type='Receipt',
+            description='Cross process flow source',
+            melting_purity=99.5,
+            in_weight=400.0,
+            user=self.user,
+        )
+        melting_lot = MeltingLot.objects.create(
+            metal_receipt_replica=metal_receipt.replica,
+            purity=purity,
+            description='Cross process flow test',
+            hook_purity=1.0,
+            required_weight=200.0,
+            user=self.user,
+        )
+        melting_lot.products.add(product)
+
+        first_record = DepartmentRecord.objects.create(
+            department=first_department,
+            melting_lot=melting_lot,
+            out_weight=80.0,
+            tounch=0.0,
+            tounch_purity=91.6,
+            field_values={},
+            user=self.user,
+            created_by=self.user,
+            updated_by=self.user,
+        )
+        last_record = DepartmentRecord.objects.create(
+            department=last_department,
+            melting_lot=melting_lot,
+            source_batch=first_record.transfer_batches.first(),
+            out_weight=55.0,
+            tounch=0.0,
+            tounch_purity=91.6,
+            field_values={},
+            user=self.user,
+            created_by=self.user,
+            updated_by=self.user,
+        )
+        next_process_record = DepartmentRecord.objects.create(
+            department=next_process_department,
+            melting_lot=melting_lot,
+            source_batch=last_record.transfer_batches.first(),
+            out_weight=30.0,
+            tounch=0.0,
+            tounch_purity=91.6,
+            field_values={},
+            user=self.user,
+            created_by=self.user,
+            updated_by=self.user,
+        )
+
+        self.assertEqual(next_process_department.get_source_department(), last_department)
+        self.assertEqual(list(last_record.transfer_batches.values_list('forwarded_weight', flat=True)), [55.0])
+        self.assertEqual(next_process_record.input_weight, 55.0)
 
     def test_updating_source_record_freezes_legacy_next_department_record_input_weight(self):
         product = Product.objects.create(product_name='Gold Wire Legacy Freeze', user=self.user)

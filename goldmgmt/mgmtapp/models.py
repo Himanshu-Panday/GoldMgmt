@@ -694,9 +694,6 @@ class DepartmentRecord(models.Model):
 
         super().save(*args, **kwargs)
 
-        if self.source_batch_id:
-            return
-
         if previous_out_weight is None:
             if self.out_weight > 0:
                 DepartmentRecordTransferBatch.objects.create(
